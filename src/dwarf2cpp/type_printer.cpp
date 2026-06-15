@@ -287,7 +287,8 @@ void DWARFTypePrinter::appendUnqualifiedNameAfter(DWARFDie D, DWARFDie Inner, bo
         if (getValOrNull(DW_AT_LLVM_ptrauth_authenticates_null_values)) {
             optionsVec.push_back("authenticates-null-values");
         }
-        if (auto AuthenticationMode = D.find(DW_AT_LLVM_ptrauth_authentication_mode)) {
+        if (auto AuthenticationMode
+            = D.find(static_cast<dwarf::Attribute>(0x3e0a))) {
             switch (*AuthenticationMode->getAsUnsignedConstant()) {
             case 0:
             case 1:
@@ -680,7 +681,6 @@ void DWARFTypePrinter::appendSubroutineNameAfter(DWARFDie D, DWARFDie Inner, boo
             OS << " __attribute__((intel_ocl_bicc))";
             break;
         case CallingConvention::DW_CC_LLVM_SpirFunction:
-        case CallingConvention::DW_CC_LLVM_OpenCLKernel:
             // These aren't available as attributes, but maybe we should still
             // render them somehow? (Clang doesn't render them, but that's an issue
             // for template names too - since then the DWARF names of templates

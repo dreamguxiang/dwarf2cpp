@@ -4,12 +4,22 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/DebugInfo/DWARF/DWARFContext.h>
+#if __has_include(<llvm/DebugInfo/DWARF/DWARFExpression.h>)
+#include <llvm/DebugInfo/DWARF/DWARFExpression.h>
+#else
+#include <llvm/DebugInfo/DWARF/LowLevel/DWARFExpression.h>
+#endif
 #include <llvm/DebugInfo/DWARF/DWARFTypeUnit.h>
 #include <llvm/Demangle/Demangle.h>
 #include <pybind11/native_enum.h>
 #include <pybind11/operators.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <unordered_map>
 
 namespace py = pybind11;
 
@@ -34,6 +44,28 @@ llvm::dwarf::Attribute ToAttribute(const std::string &key) {
     return map.at(key);
 }
 
+template <typename ContextT>
+auto getTypeUnitForHashImpl(ContextT &Context,
+                            uint16_t Version,
+                            uint64_t Hash,
+                            bool IsDWO,
+                            int) -> decltype(Context.getTypeUnitForHash(Version, Hash, IsDWO)) {
+    return Context.getTypeUnitForHash(Version, Hash, IsDWO);
+}
+
+template <typename ContextT>
+auto getTypeUnitForHashImpl(ContextT &Context,
+                            uint16_t,
+                            uint64_t Hash,
+                            bool IsDWO,
+                            long) -> decltype(Context.getTypeUnitForHash(Hash, IsDWO)) {
+    return Context.getTypeUnitForHash(Hash, IsDWO);
+}
+
+llvm::DWARFTypeUnit *getTypeUnitForHash(const llvm::DWARFUnit &Unit, uint64_t Hash) {
+    return getTypeUnitForHashImpl(Unit.getContext(), Unit.getVersion(), Hash, Unit.isDWOUnit(), 0);
+}
+
 // POLYFILL BEGINS TODO: remove after updating to LLVM 20
 llvm::DWARFDie getAttributeValueAsReferencedDie(const llvm::DWARFDie &die,
                                                 const llvm::DWARFFormValue &V) {
@@ -46,8 +78,7 @@ llvm::DWARFDie getAttributeValueAsReferencedDie(const llvm::DWARFDie &die,
             = die.getDwarfUnit()->getUnitVector().getUnitForOffset(*Offset))
             Result = SpecUnit->getDIEForOffset(*Offset);
     } else if (std::optional<uint64_t> Sig = V.getAsSignatureReference()) {
-        if (llvm::DWARFTypeUnit *TU = die.getDwarfUnit()->getContext().getTypeUnitForHash(
-                die.getDwarfUnit()->getVersion(), *Sig, die.getDwarfUnit()->isDWOUnit()))
+        if (llvm::DWARFTypeUnit *TU = getTypeUnitForHash(*die.getDwarfUnit(), *Sig))
             Result = TU->getDIEForOffset(TU->getTypeOffset() + TU->getOffset());
     }
     return Result;
@@ -89,6 +120,105 @@ std::optional<llvm::DWARFFormValue> findRecursively(const llvm::DWARFDie &die,
 
     return std::nullopt;
 };
+
+std::optional<int64_t> getExpressionAsOptionalConstant(const llvm::DWARFFormValue &Value) {
+    if (std::optional<int64_t> Signed = Value.getAsSignedConstant()) {
+        return *Signed;
+    }
+
+    if (std::optional<uint64_t> Unsigned = Value.getAsUnsignedConstant()) {
+        return static_cast<int64_t>(*Unsigned);
+    }
+
+    std::optional<llvm::ArrayRef<uint8_t>> Block = Value.getAsBlock();
+    if (!Block) {
+        return std::nullopt;
+    }
+
+    const llvm::DWARFUnit *Unit = Value.getUnit();
+    if (!Unit) {
+        return std::nullopt;
+    }
+
+    llvm::DataExtractor Data(*Block, Unit->isLittleEndian(), Unit->getAddressByteSize());
+    llvm::DWARFExpression Expression(Data, Unit->getAddressByteSize(), Unit->getFormParams().Format);
+    llvm::SmallVector<int64_t, 4> Stack;
+
+    for (const llvm::DWARFExpression::Operation &Op : Expression) {
+        if (Op.isError()) {
+            return std::nullopt;
+        }
+
+        const uint8_t Opcode = Op.getCode();
+        if (Opcode >= llvm::dwarf::DW_OP_lit0 && Opcode <= llvm::dwarf::DW_OP_lit31) {
+            Stack.push_back(Opcode - llvm::dwarf::DW_OP_lit0);
+            continue;
+        }
+
+        switch (Opcode) {
+        case llvm::dwarf::DW_OP_const1u:
+        case llvm::dwarf::DW_OP_const2u:
+        case llvm::dwarf::DW_OP_const4u:
+        case llvm::dwarf::DW_OP_const8u:
+        case llvm::dwarf::DW_OP_constu:
+            Stack.push_back(static_cast<int64_t>(Op.getRawOperand(0)));
+            break;
+
+        case llvm::dwarf::DW_OP_const1s:
+            Stack.push_back(static_cast<int8_t>(Op.getRawOperand(0)));
+            break;
+
+        case llvm::dwarf::DW_OP_const2s:
+            Stack.push_back(static_cast<int16_t>(Op.getRawOperand(0)));
+            break;
+
+        case llvm::dwarf::DW_OP_const4s:
+            Stack.push_back(static_cast<int32_t>(Op.getRawOperand(0)));
+            break;
+
+        case llvm::dwarf::DW_OP_const8s:
+        case llvm::dwarf::DW_OP_consts:
+            Stack.push_back(static_cast<int64_t>(Op.getRawOperand(0)));
+            break;
+
+        case llvm::dwarf::DW_OP_plus_uconst:
+            if (Stack.empty()) {
+                Stack.push_back(static_cast<int64_t>(Op.getRawOperand(0)));
+            } else {
+                Stack.back() += static_cast<int64_t>(Op.getRawOperand(0));
+            }
+            break;
+
+        case llvm::dwarf::DW_OP_plus:
+            if (Stack.size() < 2) {
+                return std::nullopt;
+            }
+            Stack[Stack.size() - 2] += Stack.back();
+            Stack.pop_back();
+            break;
+
+        case llvm::dwarf::DW_OP_minus:
+            if (Stack.size() < 2) {
+                return std::nullopt;
+            }
+            Stack[Stack.size() - 2] -= Stack.back();
+            Stack.pop_back();
+            break;
+
+        case llvm::dwarf::DW_OP_stack_value:
+            break;
+
+        default:
+            return std::nullopt;
+        }
+    }
+
+    if (Stack.size() != 1) {
+        return std::nullopt;
+    }
+
+    return Stack.back();
+}
 // POLYFILL ENDS TODO: remove after updating to LLVM 20
 } // namespace
 
@@ -331,8 +461,7 @@ PYBIND11_MODULE(_dwarf, m) {
                          = U->getUnitVector().getUnitForOffset(offset.value()))
                          result = spec_unit->getDIEForOffset(*offset);
                  } else if (std::optional<uint64_t> sig = V.getAsSignatureReference()) {
-                     if (llvm::DWARFTypeUnit *TU = U->getContext().getTypeUnitForHash(
-                             U->getVersion(), sig.value(), U->isDWOUnit()))
+                     if (llvm::DWARFTypeUnit *TU = getTypeUnitForHash(*U, sig.value()))
                          result = TU->getDIEForOffset(TU->getTypeOffset() + TU->getOffset());
                  }
 
@@ -357,6 +486,12 @@ PYBIND11_MODULE(_dwarf, m) {
                 return u.value();
             }
             throw py::value_error("Invalid constant value");
+        })
+        .def("as_optional_constant", [](const llvm::DWARFFormValue &self) -> py::object {
+            if (auto value = getExpressionAsOptionalConstant(self)) {
+                return py::int_(*value);
+            }
+            return py::none();
         });
 
     py::class_<PyDWARFTypePrinter>(m, "DWARFTypePrinter")

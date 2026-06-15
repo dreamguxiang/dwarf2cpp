@@ -472,7 +472,6 @@ class Visitor:
                 "DW_AT_prototyped",
                 "DW_AT_artificial",
                 "DW_AT_specification",
-                "DW_AT_vtable_elem_location",
                 "DW_AT_containing_type",  # used by llvm to link a vtable back to the type for which it was created
                 "DW_AT_reference",
                 "DW_AT_rvalue_reference",
@@ -502,6 +501,8 @@ class Visitor:
                     assert function.virtuality != VirtualityAttribute.NONE, "Expected non-NONE virtuality"
                 case "DW_AT_deleted":
                     function.is_deleted = True
+                case "DW_AT_vtable_elem_location":
+                    function.vtable_index = attribute.value.as_optional_constant()
                 case _:
                     raise ValueError(f"Unhandled attribute {attribute.name}")
 
@@ -844,7 +845,7 @@ class Visitor:
                 case "DW_AT_accessibility":
                     variable.access = AccessAttribute(attribute.value.as_constant())
                 case "DW_AT_data_member_location":
-                    pass
+                    variable.offset = attribute.value.as_optional_constant()
                 case "DW_AT_bit_size":
                     variable.bit_size = attribute.value.as_constant()
                 case _:
@@ -895,7 +896,6 @@ class Visitor:
                 "DW_AT_decl_file",
                 "DW_AT_decl_line",
                 "DW_AT_calling_convention",
-                "DW_AT_byte_size",  # TODO: this can be useful
                 "DW_AT_declaration",
                 "DW_AT_containing_type",
                 "DW_AT_export_symbols",
@@ -904,6 +904,8 @@ class Visitor:
                 continue
 
             match attribute.name:
+                case "DW_AT_byte_size":
+                    struct.byte_size = attribute.value.as_optional_constant()
                 case "DW_AT_alignment":
                     struct.alignment = attribute.value.as_constant()
                 case "DW_AT_accessibility":
@@ -1004,6 +1006,7 @@ class Visitor:
             declaration.bases = []
             declaration.members = {}
             declaration.alignment = None
+            declaration.byte_size = None
             declaration.is_declaration = True
 
             struct.template = Template(name="", declaration=declaration)

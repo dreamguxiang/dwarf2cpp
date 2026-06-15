@@ -20,7 +20,7 @@
   {%- for member in members if not member.is_implicit -%}
     {%- with obj = member -%}
       {{- "\n" if (obj.template or obj.kind == "template") and not loop.first -}}
-      {%- include "{}.jinja".format(obj.kind) with context -%}{{ "; " if not loop.last else ";\n" }}
+      {%- include "{}.jinja".format(obj.kind) with context -%}{% include "declaration_end.jinja" with context %}{{ " " if not loop.last else "\n" }}
     {%- endwith -%}
   {%- endfor -%}
   {%- endset -%}

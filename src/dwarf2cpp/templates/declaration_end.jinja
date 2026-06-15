@@ -1,0 +1,9 @@
+{%- set comment = "" -%}
+{%- if obj.kind == "attribute" and obj.offset is not none and not obj.is_static -%}
+  {%- set comment = " // + {}".format(obj.offset) -%}
+{%- elif obj.kind == "function" and obj.vtable_index is not none -%}
+  {%- set comment = " // vtable index: {}".format(obj.vtable_index) -%}
+{%- elif obj.kind in ["class", "struct", "union"] and not obj.is_declaration and obj.byte_size is not none -%}
+  {%- set comment = " // size: {}".format(obj.byte_size) -%}
+{%- endif -%}
+;{{ comment -}}

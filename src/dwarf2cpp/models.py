@@ -57,6 +57,7 @@ class Attribute(Object):
     default_value: int | str | None = None
     alignment: int | None = None
     bit_size: int | None = None
+    offset: int | None = None
     is_static: bool = False
 
     def merge(self, other: Object) -> bool:
@@ -71,6 +72,7 @@ class Attribute(Object):
 
         self.alignment = self.alignment or other.alignment
         self.bit_size = self.bit_size or other.bit_size
+        self.offset = self.offset if self.offset is not None else other.offset
         self.is_static = self.is_static or other.is_static
         return True
 
@@ -100,6 +102,7 @@ class Function(Object):
     is_static: bool = False
     is_const: bool = False
     virtuality: VirtualityAttribute | None = None
+    vtable_index: int | None = None
 
     def merge(self, other: Object) -> bool:
         if not isinstance(other, Function):
@@ -122,6 +125,7 @@ class Function(Object):
         self.is_static = self.is_static or other.is_static
         self.is_const = self.is_const or other.is_const
         self.virtuality = self.virtuality or other.virtuality
+        self.vtable_index = self.vtable_index if self.vtable_index is not None else other.vtable_index
         return True
 
 
@@ -132,6 +136,7 @@ class Struct(Object):
     bases: list[tuple[str, AccessAttribute | None]] = field(default_factory=list)
     members: dict[int, list[Object]] = field(default_factory=lambda: defaultdict(list))
     alignment: int | None = None
+    byte_size: int | None = None
 
     def merge(self, other: Object) -> bool:
         if not isinstance(other, Struct):
@@ -158,6 +163,7 @@ class Struct(Object):
             self.members[lineno] = result
 
         self.alignment = self.alignment or other.alignment
+        self.byte_size = self.byte_size if self.byte_size is not None else other.byte_size
         return True
 
 
