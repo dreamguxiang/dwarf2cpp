@@ -845,7 +845,7 @@ class Visitor:
                 case "DW_AT_accessibility":
                     variable.access = AccessAttribute(attribute.value.as_constant())
                 case "DW_AT_data_member_location":
-                    variable.offset = attribute.value.as_optional_constant()
+                    variable.offset = attribute.value.as_unsigned_optional_constant()
                 case "DW_AT_bit_size":
                     variable.bit_size = attribute.value.as_constant()
                 case _:
@@ -905,7 +905,7 @@ class Visitor:
 
             match attribute.name:
                 case "DW_AT_byte_size":
-                    struct.byte_size = attribute.value.as_optional_constant()
+                    struct.byte_size = attribute.value.as_unsigned_optional_constant()
                 case "DW_AT_alignment":
                     struct.alignment = attribute.value.as_constant()
                 case "DW_AT_accessibility":

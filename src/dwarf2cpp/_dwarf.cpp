@@ -121,13 +121,24 @@ std::optional<llvm::DWARFFormValue> findRecursively(const llvm::DWARFDie &die,
     return std::nullopt;
 };
 
-std::optional<int64_t> getExpressionAsOptionalConstant(const llvm::DWARFFormValue &Value) {
-    if (std::optional<int64_t> Signed = Value.getAsSignedConstant()) {
-        return *Signed;
-    }
+std::optional<int64_t> getExpressionAsOptionalConstant(const llvm::DWARFFormValue &Value,
+                                                       bool PreferUnsigned = false) {
+    if (PreferUnsigned) {
+        if (std::optional<uint64_t> Unsigned = Value.getAsUnsignedConstant()) {
+            return static_cast<int64_t>(*Unsigned);
+        }
 
-    if (std::optional<uint64_t> Unsigned = Value.getAsUnsignedConstant()) {
-        return static_cast<int64_t>(*Unsigned);
+        if (std::optional<int64_t> Signed = Value.getAsSignedConstant()) {
+            return *Signed;
+        }
+    } else {
+        if (std::optional<int64_t> Signed = Value.getAsSignedConstant()) {
+            return *Signed;
+        }
+
+        if (std::optional<uint64_t> Unsigned = Value.getAsUnsignedConstant()) {
+            return static_cast<int64_t>(*Unsigned);
+        }
     }
 
     std::optional<llvm::ArrayRef<uint8_t>> Block = Value.getAsBlock();
@@ -489,6 +500,12 @@ PYBIND11_MODULE(_dwarf, m) {
         })
         .def("as_optional_constant", [](const llvm::DWARFFormValue &self) -> py::object {
             if (auto value = getExpressionAsOptionalConstant(self)) {
+                return py::int_(*value);
+            }
+            return py::none();
+        })
+        .def("as_unsigned_optional_constant", [](const llvm::DWARFFormValue &self) -> py::object {
+            if (auto value = getExpressionAsOptionalConstant(self, true)) {
                 return py::int_(*value);
             }
             return py::none();
