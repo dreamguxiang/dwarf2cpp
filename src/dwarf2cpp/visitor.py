@@ -65,6 +65,7 @@ class Visitor:
         self._functions: dict[str, list[Function]] = defaultdict(list)
         self._templates: dict[str | int, dict[int, list[Template]]] = defaultdict(lambda: defaultdict(list))
         self._types = {}
+        self._structs_by_name: dict[str, Class | Struct | Union] = {}
 
     @property
     def files(self) -> Generator[tuple[str, dict[int, list[Object]]], None, None]:
@@ -175,6 +176,13 @@ class Visitor:
             }:
                 decl_file, decl_line = child.decl_file, child.decl_line
                 if not decl_file or not decl_line:
+                    if child.tag in {
+                        "DW_TAG_class_type",
+                        "DW_TAG_enumeration_type",
+                        "DW_TAG_union_type",
+                        "DW_TAG_structure_type",
+                    }:
+                        self.visit(child)
                     continue
 
                 decl_file = posixpath.normpath(decl_file.replace("\\", "/"))
@@ -250,6 +258,13 @@ class Visitor:
             }:
                 decl_file, decl_line = child.decl_file, child.decl_line
                 if not decl_file or not decl_line:
+                    if child.tag in {
+                        "DW_TAG_class_type",
+                        "DW_TAG_enumeration_type",
+                        "DW_TAG_union_type",
+                        "DW_TAG_structure_type",
+                    }:
+                        self.visit(child)
                     continue
 
                 decl_file = posixpath.normpath(decl_file.replace("\\", "/"))
@@ -273,7 +288,7 @@ class Visitor:
                 raise ValueError(f"Unhandled child tag {child.tag}")
 
     def visit_typedef(self, die: DWARFDie) -> None:
-        if not die.decl_file or not die.decl_line:
+        if not die.short_name:
             return
 
         typedef = TypeDef(name=die.short_name)
@@ -896,7 +911,6 @@ class Visitor:
                 "DW_AT_decl_file",
                 "DW_AT_decl_line",
                 "DW_AT_calling_convention",
-                "DW_AT_declaration",
                 "DW_AT_containing_type",
                 "DW_AT_export_symbols",
                 "DW_AT_signature",  # used by DWARFv4, removed in DWARFv5
@@ -910,6 +924,8 @@ class Visitor:
                     struct.alignment = attribute.value.as_constant()
                 case "DW_AT_accessibility":
                     struct.access = AccessAttribute(attribute.value.as_constant())
+                case "DW_AT_declaration":
+                    struct.is_declaration = True
                 case _:
                     print(die.dump())
                     raise ValueError(f"Unhandled attribute {attribute.name}")
@@ -917,7 +933,8 @@ class Visitor:
         self._set(die, struct)
 
         template_params = []
-        for child in die.children:
+        child_count = len(die.children)
+        for child_index, child in enumerate(die.children):
             if child.tag in {
                 "DW_TAG_typedef",
                 "DW_TAG_class_type",
@@ -930,11 +947,12 @@ class Visitor:
                 "DW_TAG_imported_module",
                 "DW_TAG_imported_declaration",
             }:
-                if not child.decl_line:
+                member_line = self._member_line(child, child_index, child_count)
+                if member_line is None:
                     continue
 
-                lines = struct.members[child.decl_line]
-                if len(lines) > 4:
+                lines = struct.members[member_line]
+                if child.decl_line and len(lines) > 4:
                     # too many items on a single line (template instantiations?)
                     continue
 
@@ -959,10 +977,10 @@ class Visitor:
                     if template.access is None:
                         template.access = access
 
-                    if template := self._register_template(die.offset, child.decl_line, template):
+                    if template := self._register_template(die.offset, member_line, template):
                         lines.append(template)
 
-                lines.append(member)
+                self._append_member(struct, member_line, member)
                 continue
 
             if child.tag in {
@@ -1014,9 +1032,72 @@ class Visitor:
                 self.visit(template_param)
                 struct.template.parameters.append(self._get(template_param))
 
+        canonical = self._merge_struct(die, struct)
+        if canonical is not struct:
+            self._objects[(die.unit.is_type_unit, die.offset)] = canonical
+
     def _get(self, die: DWARFDie) -> Any | None:
         key = (die.unit.is_type_unit, die.offset)
         return self._objects.get(key, None)
+
+    def _member_line(self, child: DWARFDie, child_index: int, child_count: int) -> int | None:
+        if child.decl_line:
+            return child.decl_line
+
+        if child.tag in {
+            "DW_TAG_typedef",
+            "DW_TAG_class_type",
+            "DW_TAG_enumeration_type",
+            "DW_TAG_union_type",
+            "DW_TAG_structure_type",
+        }:
+            # Some nested type DIEs only carry their parent scope, not a source line.
+            # Use a stable synthetic line so they are still emitted and keep child order.
+            return child_index - child_count
+
+        return None
+
+    def _append_member(self, struct: Class | Struct | Union, lineno: int, member: Object) -> None:
+        if member.kind not in {"class", "struct", "union", "enum", "typedef"}:
+            struct.members[lineno].append(member)
+            return
+
+        for existing_lineno, members in struct.members.items():
+            for existing in members:
+                if existing.kind != member.kind or existing.name != member.name:
+                    continue
+
+                if not existing.merge(member):
+                    continue
+
+                if existing_lineno < 0 <= lineno:
+                    members.remove(existing)
+                    struct.members[lineno].append(existing)
+
+                return
+
+        struct.members[lineno].append(member)
+
+    def _merge_struct(self, die: DWARFDie, struct: Class | Struct | Union) -> Class | Struct | Union:
+        name = self._qualified_die_name(die)
+        if not name:
+            return struct
+
+        if existing := self._structs_by_name.get(name):
+            if existing is struct:
+                return struct
+
+            if existing.merge(struct):
+                return existing
+
+        self._structs_by_name[name] = struct
+        return struct
+
+    def _qualified_die_name(self, die: DWARFDie) -> str:
+        printer = DWARFTypePrinter()
+        printer.append_scopes(die.parent)
+        printer.append_unqualified_name(die)
+        return str(printer).strip()
 
     def _set(self, die: DWARFDie, obj) -> None:
         key = (die.unit.is_type_unit, die.offset)

@@ -49,6 +49,7 @@ def do_insert_name(tp: str | tuple[str, str], name: str):
 def do_grouped_member_sections(members: dict[int, list[Object]]) -> list[list[list[Object]]]:
     items = _flatten_members(members)
 
+    type_declarations = []
     virtual_functions = []
     data_members = []
     static_members = []
@@ -59,7 +60,9 @@ def do_grouped_member_sections(members: dict[int, list[Object]]) -> list[list[li
         obj = item[2]
         subject = _category_subject(obj)
 
-        if _is_virtual_function(subject):
+        if _is_type_declaration(subject):
+            type_declarations.append(item)
+        elif _is_virtual_function(subject):
             virtual_functions.append(item)
         elif isinstance(subject, Attribute) and not subject.is_static:
             data_members.append(item)
@@ -71,6 +74,7 @@ def do_grouped_member_sections(members: dict[int, list[Object]]) -> list[list[li
             other_declarations.append(item)
 
     sections = [
+        sorted(type_declarations, key=_source_sort_key),
         sorted(virtual_functions, key=_virtual_sort_key),
         sorted(data_members, key=_member_sort_key),
         sorted(static_members, key=_source_sort_key),
@@ -100,6 +104,10 @@ def _category_subject(obj: Object) -> Object:
 
 def _is_virtual_function(obj: Object) -> bool:
     return isinstance(obj, Function) and (obj.virtuality is not None or obj.vtable_index is not None)
+
+
+def _is_type_declaration(obj: Object) -> bool:
+    return obj.kind in {"class", "struct", "union", "enum", "typedef"}
 
 
 def _source_sort_key(item: tuple[int, int, Object]) -> tuple[int, int]:

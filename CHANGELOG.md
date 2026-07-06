@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - Generate an additional grouped header copy with virtual functions, data members, and static members collected together.
 
+### Changed
+- Improve generated header spacing around access labels and top-level declarations.
+- Preserve nested type declarations that do not have their own DWARF source line.
+
 ## [0.1.0] - 2026-05-16
 
 ### Added

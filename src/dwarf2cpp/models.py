@@ -164,7 +164,39 @@ class Struct(Object):
 
         self.alignment = self.alignment or other.alignment
         self.byte_size = self.byte_size if self.byte_size is not None else other.byte_size
+        self.is_declaration = self.is_declaration and other.is_declaration
+        self._dedupe_type_members()
         return True
+
+    def _dedupe_type_members(self) -> None:
+        seen: dict[tuple[str, str], tuple[int, Object]] = {}
+
+        for lineno, members in list(self.members.items()):
+            result = []
+            for member in members:
+                if member.kind not in {"class", "struct", "union", "enum", "typedef"}:
+                    result.append(member)
+                    continue
+
+                key = (member.kind, member.name)
+                existing = seen.get(key)
+                if existing is None:
+                    seen[key] = (lineno, member)
+                    result.append(member)
+                    continue
+
+                existing_lineno, existing_member = existing
+                if not existing_member.merge(member):
+                    result.append(member)
+                    continue
+
+                if existing_lineno < 0 <= lineno:
+                    old_members = self.members[existing_lineno]
+                    old_members.remove(existing_member)
+                    result.append(existing_member)
+                    seen[key] = (lineno, existing_member)
+
+            self.members[lineno] = result
 
 
 @dataclass
