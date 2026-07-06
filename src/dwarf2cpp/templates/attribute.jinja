@@ -3,6 +3,8 @@
 {{- "alignas({}) ".format(obj.alignment) if obj.alignment -}}
 {%- if obj.type is string or obj.type is sequence -%}
   {{ obj.type | insert_name(obj.name) }}
+{%- elif obj.type.name -%}
+  {{ obj.type.name | insert_name(obj.name) }}
 {%- else -%}
   {%- with obj = obj.type -%}
     {%- include "{}.jinja".format(obj.kind) with context -%}
