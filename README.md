@@ -47,13 +47,18 @@ Options:
   --base-dir TEXT         Base directory used during compilation.  [required]
   -o, --output-path PATH  Output directory for generated files. Defaults to
                           'out' inside the input file's directory.
+  --grouped-output-path PATH
+                          Output directory for grouped generated files. Defaults
+                          to 'grouped' inside the output directory.
   --help                  Show this message and exit.
 ```
 
 The `PATH` argument must point to a binary containing DWARF debug information.
 
 * `--base-dir` should point to the root directory used during compilation. This helps resolve relative include paths when reconstructing headers.
-* `--output-path` controls where the generated headers are stored. If not specified, the tool creates an `out/` folder next to the input file.
+* `--output-path` controls where the source-order generated headers are stored. If not specified, the tool creates an `out/` folder next to the input file.
+* `--grouped-output-path` controls where the grouped headers are stored. If not specified, the tool creates a `grouped/` folder inside the output directory.
+* The grouped version keeps virtual functions together, data members together, and static members together. Virtual functions are ordered by vtable index when available, and data members are ordered by member offset when available.
 
 ## Examples
 

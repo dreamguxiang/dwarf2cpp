@@ -1,4 +1,4 @@
-{%- set ns = namespace(access='private' if obj.kind == "class" else 'public') -%}
+{%- set ns = namespace(access='private' if obj.kind == "class" else 'public', has_member=false) -%}
 
 {{- "template<>\n" if obj.template -}}
 {{ obj.kind }}{{ " " ~ obj.name if obj.name }}{{ " alignas({})".format(obj.alignment) if obj.alignment }}
@@ -7,6 +7,30 @@
 {{ " : " if loop.first }}{{ access.name.lower() ~ " " if access }}{{ base }}{{ ", " if not loop.last }}
 {%- endfor -%}
 {{ " {" }}
+{%- if grouped_members | default(false) -%}
+{%- for section in obj.members | grouped_member_sections -%}
+  {%- if ns.has_member -%}{{ "\n" }}{%- endif -%}
+  {%- for members in section -%}
+    {%- if members|length > 0 -%}
+      {%- set access = members[0].access.name.lower() -%}
+      {%- if access != ns.access -%}
+          {{ access ~ ":\n" }}
+          {%- set ns.access = access -%}
+      {%- endif -%}
+    {%- endif -%}
+    {%- set content -%}
+    {%- for member in members -%}
+      {%- with obj = member -%}
+        {{- "\n" if (obj.template or obj.kind == "template") and not loop.first -}}
+        {%- include "{}.jinja".format(obj.kind) with context -%}{% include "declaration_end.jinja" with context %}{{ " " if not loop.last else "\n" }}
+      {%- endwith -%}
+    {%- endfor -%}
+    {%- endset -%}
+    {{ content | indent(4, first=True) if content }}
+    {%- set ns.has_member = true -%}
+  {%- endfor -%}
+{%- endfor -%}
+{%- else -%}
 {% for _, members in obj.members | dictsort -%}
   {%- if members|length > 0 -%}
     {%- set access = members[0].access.name.lower() -%}
@@ -26,5 +50,6 @@
   {%- endset -%}
   {{ content | indent(4, first=True) if content }}
 {%- endfor -%}
+{%- endif -%}
 }
 {%- endif -%}
